@@ -1,30 +1,75 @@
 import { TheHiveAlert, GeoCoords, Severity } from '../types';
 
-// ============================================================================
-// REAL CONFIGURATION AREA
-// ============================================================================
-// WARNING: Ensure CORS is enabled on your TheHive instance or use a Proxy.
-const THEHIVE_API_URL = "http://192.168.13.202:9000/api/v1/query"; 
-const THEHIVE_API_KEY = "7UV19Oj+fgu9MwZ5aragqGiumwI89kal";
-
 // Using a public GeoIP service (Rate limits apply). 
 const GEO_API_URL = "https://ipapi.co"; 
-// ============================================================================
 
 /**
- * REAL: Fetches Lat/Lng from a public GeoIP API.
- * Returns null if lookup fails (to filter out bad IPs).
+ * HELPER: Normalizes the host URL to ensure it has a protocol and no trailing slash.
+ * This prevents the browser from treating the IP as a relative path (localhost:3000/IP...).
+ */
+const normalizeUrl = (inputUrl: string): string => {
+  let url = inputUrl.trim();
+  // Remove trailing slashes
+  while (url.endsWith('/')) {
+    url = url.slice(0, -1);
+  }
+  // Prepend http:// if missing (and not https)
+  if (!/^https?:\/\//i.test(url)) {
+    url = `http://${url}`;
+  }
+  return url;
+};
+
+/**
+ * Checks if TheHive server is reachable via /api/v1/status
+ * @param hostUrl The base URL (e.g., http://192.168.1.1:9000)
+ * @param apiKey The API Key
+ */
+export const checkConnection = async (hostUrl: string, apiKey: string): Promise<boolean> => {
+  const cleanUrl = normalizeUrl(hostUrl);
+  const targetUrl = `${cleanUrl}/api/v1/status`;
+
+  console.log(`[TheHive] Checking Status: ${targetUrl}`);
+
+  try {
+    const controller = new AbortController();
+    // Increased timeout to 5s for initial handshake
+    const timeoutId = setTimeout(() => controller.abort(), 5000); 
+
+    const response = await fetch(targetUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      console.log("[TheHive] Connection Successful");
+      return true;
+    } else {
+      console.error("TheHive Status Check Failed:", response.status, response.statusText);
+      return false;
+    }
+  } catch (error) {
+    console.error("TheHive Connection Error:", error);
+    return false;
+  }
+};
+
+/**
+ * Fetches Lat/Lng from a public GeoIP API.
  */
 export const ipToGeo = async (ip: string): Promise<GeoCoords | null> => {
-  // Filter out private/local IPs to save API calls
   if (!ip || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('127.')) {
     return null;
   }
 
   try {
-    // Add 3s timeout for GeoIP to prevent hanging
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
     const response = await fetch(`${GEO_API_URL}/${ip}/json/`, {
       signal: controller.signal
@@ -42,8 +87,7 @@ export const ipToGeo = async (ip: string): Promise<GeoCoords | null> => {
     }
     return null;
   } catch (error) {
-    // Fail silently for GeoIP to keep the map running
-    // console.warn(`Failed to resolve Geo for IP ${ip}`);
+    // Silent fail for geo lookup to not spam console
     return null;
   }
 };
@@ -58,9 +102,14 @@ const mapSeverity = (sevInt: number): Severity => {
 };
 
 /**
- * REAL: Fetches alerts directly from TheHive API.
+ * Fetches alerts directly from TheHive API using the Query endpoint.
  */
-export const fetchTheHiveAlerts = async (): Promise<TheHiveAlert[]> => {
+export const fetchTheHiveAlerts = async (hostUrl: string, apiKey: string): Promise<TheHiveAlert[]> => {
+  const cleanUrl = normalizeUrl(hostUrl);
+  const targetUrl = `${cleanUrl}/api/v1/query?name=alert-list`;
+
+  // console.log(`[TheHive] Fetching Alerts: ${targetUrl}`);
+
   const query = {
     query: [
       { _name: "listAlert" },
@@ -73,14 +122,14 @@ export const fetchTheHiveAlerts = async (): Promise<TheHiveAlert[]> => {
   };
 
   try {
-    // Add 5s timeout to prevent infinite loading state
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    // Increased timeout to 10s to allow server processing time
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    const response = await fetch(`${THEHIVE_API_URL}?name=alert-list`, {
+    const response = await fetch(targetUrl, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${THEHIVE_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(query),
@@ -89,21 +138,27 @@ export const fetchTheHiveAlerts = async (): Promise<TheHiveAlert[]> => {
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      // Throw error to trigger catch block
       throw new Error(`API Error: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
     
-    // Safety check: Ensure data is an array before mapping
     if (!Array.isArray(data)) {
-      console.warn("TheHive API returned non-array data:", data);
+      console.warn("[TheHive] Unexpected response format (not array):", data);
       return [];
     }
     
     return data.map((item: any) => {
+      // Try to find IP in artifacts first, then source
       const ipArtifact = item.artifacts?.find((a: any) => a.dataType === 'ip');
-      const extractedIp = ipArtifact ? ipArtifact.data : (item.source || "0.0.0.0");
+      // If no artifact, check if 'source' looks like an IP, otherwise fallback
+      let extractedIp = ipArtifact ? ipArtifact.data : item.source;
+      
+      // Basic IP validation regex to avoid sending non-IPs to GeoAPI
+      const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+      if (!ipRegex.test(extractedIp)) {
+          extractedIp = "0.0.0.0";
+      }
 
       return {
         id: item.id,
@@ -117,9 +172,7 @@ export const fetchTheHiveAlerts = async (): Promise<TheHiveAlert[]> => {
     });
 
   } catch (error: any) {
-    // Re-throw specific errors if needed, or handle them
-    // Returning empty array allows the UI to render "No Alerts" instead of crashing
-    console.error("Fetch Error:", error.message);
-    throw error; // Let App.tsx handle the error state
+    console.error(`[TheHive] Fetch Error (${targetUrl}):`, error.message);
+    throw error;
   }
 };
