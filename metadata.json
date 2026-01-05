@@ -1,0 +1,5 @@
+{
+  "name": "CyberThreatMap-TheHive",
+  "description": "A 3D Cyberpunk Threat Map visualizing TheHive alerts using Globe.gl and React.",
+  "requestFramePermissions": []
+}
