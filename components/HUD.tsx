@@ -3,6 +3,7 @@ import { TheHiveAlert, Severity } from '../types';
 
 interface HUDProps {
   alerts: TheHiveAlert[];
+  status?: 'connected' | 'error' | 'connecting';
 }
 
 const getSeverityColor = (severity: Severity) => {
@@ -15,7 +16,7 @@ const getSeverityColor = (severity: Severity) => {
   }
 };
 
-const HUD: React.FC<HUDProps> = ({ alerts }) => {
+const HUD: React.FC<HUDProps> = ({ alerts, status = 'connected' }) => {
   return (
     <div className="absolute top-0 right-0 h-full w-full pointer-events-none md:w-1/3 p-4 flex flex-col items-end z-10">
       
@@ -23,12 +24,24 @@ const HUD: React.FC<HUDProps> = ({ alerts }) => {
       <div className="bg-black/80 backdrop-blur-sm border-l-2 border-green-500 p-4 mb-4 w-full md:w-96 shadow-lg pointer-events-auto">
         <h1 className="text-2xl font-bold text-green-500 tracking-wider mb-2">SOC THREAT MAP</h1>
         <div className="flex justify-between text-xs text-green-400/70">
-          <span>SYSTEM: ONLINE</span>
+          <span>SYSTEM: {status === 'error' ? 'OFFLINE' : 'ONLINE'}</span>
           <span>SOURCE: THEHIVE</span>
         </div>
-        <div className="mt-2 h-1 w-full bg-green-900/30">
-          <div className="h-full bg-green-500 animate-pulse w-2/3"></div>
+        
+        {/* Status Bar */}
+        <div className="mt-2 h-1 w-full bg-gray-800">
+          <div className={`h-full transition-all duration-500 ${
+            status === 'connected' ? 'bg-green-500 w-full animate-pulse' :
+            status === 'error' ? 'bg-red-600 w-full' :
+            'bg-yellow-500 w-1/2 animate-bounce'
+          }`}></div>
         </div>
+        
+        {status === 'error' && (
+          <div className="mt-2 text-xs text-red-500 font-bold border border-red-900 bg-red-900/20 p-1">
+            CONNECTION ERROR: CHECK API/CORS
+          </div>
+        )}
       </div>
 
       {/* Alert Feed */}
@@ -57,7 +70,9 @@ const HUD: React.FC<HUDProps> = ({ alerts }) => {
       
       {/* Footer Stats */}
       <div className="bg-black/80 border-t border-green-500/30 p-2 w-full md:w-96 text-center">
-         <span className="text-xs text-green-600 animate-pulse">Scanning live traffic...</span>
+         <span className={`text-xs ${status === 'error' ? 'text-red-500' : 'text-green-600'} animate-pulse`}>
+            {status === 'error' ? 'RETRYING CONNECTION...' : 'SCANNING LIVE TRAFFIC...'}
+         </span>
       </div>
 
     </div>

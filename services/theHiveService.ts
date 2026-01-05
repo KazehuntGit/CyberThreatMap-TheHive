@@ -4,11 +4,10 @@ import { TheHiveAlert, GeoCoords, Severity } from '../types';
 // REAL CONFIGURATION AREA
 // ============================================================================
 // WARNING: Ensure CORS is enabled on your TheHive instance or use a Proxy.
-const THEHIVE_API_URL = "http://localhost:9000/api/v1/query"; 
-const THEHIVE_API_KEY = "YOUR_API_KEY_HERE";
+const THEHIVE_API_URL = "http://192.168.13.202:9000/api/v1/query"; 
+const THEHIVE_API_KEY = "7UV19Oj+fgu9MwZ5aragqGiumwI89kal";
 
 // Using a public GeoIP service (Rate limits apply). 
-// In high-traffic production, replace with a local MaxMind DB or paid service.
 const GEO_API_URL = "https://ipapi.co"; 
 // ============================================================================
 
@@ -18,12 +17,20 @@ const GEO_API_URL = "https://ipapi.co";
  */
 export const ipToGeo = async (ip: string): Promise<GeoCoords | null> => {
   // Filter out private/local IPs to save API calls
-  if (ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('127.')) {
+  if (!ip || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('127.')) {
     return null;
   }
 
   try {
-    const response = await fetch(`${GEO_API_URL}/${ip}/json/`);
+    // Add 3s timeout for GeoIP to prevent hanging
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+    const response = await fetch(`${GEO_API_URL}/${ip}/json/`, {
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
     if (!response.ok) throw new Error("GeoIP Failed");
     const data = await response.json();
     
@@ -35,15 +42,12 @@ export const ipToGeo = async (ip: string): Promise<GeoCoords | null> => {
     }
     return null;
   } catch (error) {
-    console.warn(`Failed to resolve Geo for IP ${ip}:`, error);
+    // Fail silently for GeoIP to keep the map running
+    // console.warn(`Failed to resolve Geo for IP ${ip}`);
     return null;
   }
 };
 
-/**
- * Parses TheHive Severity (1-4) to our string types.
- * TheHive usually uses integer: 1 (Low), 2 (Medium), 3 (High), 4 (Critical)
- */
 const mapSeverity = (sevInt: number): Severity => {
   switch (sevInt) {
     case 4: return 'critical';
@@ -61,7 +65,7 @@ export const fetchTheHiveAlerts = async (): Promise<TheHiveAlert[]> => {
     query: [
       { _name: "listAlert" },
       { _name: "filter", _and: [
-        { _name: "eq", field: "status", value: "New" } // Only fetch 'New' alerts
+        { _name: "eq", field: "status", value: "New" } 
       ]},
       { _name: "sort", properties: [{ date: "desc" }] },
       { _name: "page", from: 0, to: 10 }
@@ -69,28 +73,35 @@ export const fetchTheHiveAlerts = async (): Promise<TheHiveAlert[]> => {
   };
 
   try {
+    // Add 5s timeout to prevent infinite loading state
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
     const response = await fetch(`${THEHIVE_API_URL}?name=alert-list`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${THEHIVE_API_KEY}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(query)
+      body: JSON.stringify(query),
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
-      console.error("TheHive API Error:", response.statusText);
-      return []; // Return empty on error to keep app alive
+      // Throw error to trigger catch block
+      throw new Error(`API Error: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
     
-    // Map TheHive JSON response to our App's Type
-    // Note: We attempt to find an IP in artifacts, or fallback to a custom field
+    // Safety check: Ensure data is an array before mapping
+    if (!Array.isArray(data)) {
+      console.warn("TheHive API returned non-array data:", data);
+      return [];
+    }
+    
     return data.map((item: any) => {
-      // Logic to extract IP: Check artifacts array or use a default field
-      // This part depends heavily on how your Cortex analyzers populate data.
-      // For now, we look for an artifact with dataType 'ip'
       const ipArtifact = item.artifacts?.find((a: any) => a.dataType === 'ip');
       const extractedIp = ipArtifact ? ipArtifact.data : (item.source || "0.0.0.0");
 
@@ -105,8 +116,10 @@ export const fetchTheHiveAlerts = async (): Promise<TheHiveAlert[]> => {
       };
     });
 
-  } catch (error) {
-    console.error("Network Error fetching from TheHive:", error);
-    return [];
+  } catch (error: any) {
+    // Re-throw specific errors if needed, or handle them
+    // Returning empty array allows the UI to render "No Alerts" instead of crashing
+    console.error("Fetch Error:", error.message);
+    throw error; // Let App.tsx handle the error state
   }
 };

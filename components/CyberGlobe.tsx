@@ -35,7 +35,8 @@ const CyberGlobe: React.FC<CyberGlobeProps> = ({ arcs }) => {
   return (
     <Globe
       ref={globeEl}
-      globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
+      // CRITICAL FIX: Use explicit https protocol. '//' fails if running from file://
+      globeImageUrl="https://unpkg.com/three-globe/example/img/earth-night.jpg"
       backgroundColor="#000000"
       
       // Atmosphere
