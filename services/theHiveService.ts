@@ -4,8 +4,8 @@ import { TheHiveAlert, GeoCoords, Severity } from '../types';
 // REAL CONFIGURATION AREA
 // ============================================================================
 // WARNING: Ensure CORS is enabled on your TheHive instance or use a Proxy.
-const THEHIVE_API_URL = "http://192.168.13.202:9000/api/v1/query"; 
-const THEHIVE_API_KEY = "7UV19Oj+fgu9MwZ5aragqGiumwI89kal";
+const THEHIVE_API_URL = "http://localhost:9000/api/v1/query"; 
+const THEHIVE_API_KEY = "YOUR_API_KEY_HERE";
 
 // Using a public GeoIP service (Rate limits apply). 
 // In high-traffic production, replace with a local MaxMind DB or paid service.
